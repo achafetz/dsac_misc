@@ -4,7 +4,7 @@
 <!-- badges: start -->
 <!-- badges: end -->
 
-A collection of miscellaneous analytics for CMS/DSAC projects
+A collection of miscellaneous analytics for CMS/DSAC projects.
 
 
 ---
