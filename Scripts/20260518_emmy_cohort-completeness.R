@@ -10,6 +10,7 @@
 
 library(tidyverse)
 library(glue)
+library(emmytics)
 library(gagglr) ##install.packages('gagglr', repos = c('https://usaid-oha-si.r-universe.dev', 'https://cloud.r-project.org'))
 library(scales, warn.conflicts = FALSE)
 library(systemfonts)
@@ -140,12 +141,18 @@ df_viz |>
     color = dsac_navy,
     lineend = "round"
   ) +
+  geom_point(
+    aes(x = invite_date + .4, y = lab_rate),
+    na.rm = TRUE,
+    color = dsac_navy,
+    size = 3
+  ) +
   geom_label(
-    aes(label = label_percent(.1)(lab_rate)),
+    aes(y = lab_rate, label = label_percent(.1)(lab_rate)),
     na.rm = TRUE,
     size = 14 / .pt,
-    vjust = 2,
-    hjust = -.5,
+    # vjust = 2,
+    hjust = -.25,
     fill = "white",
     family = "Source Sans 3 SemiBold",
     color = dsac_navy,
@@ -164,10 +171,13 @@ df_viz |>
     )
   ) +
   scale_fill_identity() +
-  theme_minimal(base_family = "Source Sans 3", base_size = 15) +
-  theme(
-    panel.grid.minor.x = element_blank(),
-    panel.grid.major.x = element_blank(),
-    plot.title = element_text(face = "bold"),
-    plot.caption = element_text(size = 11, color = "#909090")
-  )
+  si_style_ygrid()
+
+si_preview()
+
+df_viz |>
+  ggplot(aes(caseworker_invites, completion_rate)) +
+  geom_smooth(method = "lm", se = FALSE, alpha = .3) +
+  geom_point(size = 3, alpha = .6) +
+  scale_x_log10() +
+  si_style()
