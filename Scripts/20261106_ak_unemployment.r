@@ -24,9 +24,9 @@ library(ggrepel)
 
 ref_id <- "773c73732db8" #a reference to be placed in viz captions
 
-path_ak <- "Data/Regional_Monthly_Values_1990_and_Up.csv"
+path_ak <- "Data/Alaska_NOT_SEASONALLY_adjusted.csv"
 
-path_us <- "Data/UNRATENSA.csv"
+path_us <- "Data/United States_NOT_SEASONALLY_adjusted.csv"
 
 
 #list of locales from file AK sent over
@@ -53,7 +53,7 @@ v_provided <- c(
   "Petersburg Borough",
   "Prince of Wales-Hyder Census Area",
   "City and Borough of Sitka",
-  "Skagway Municipality",
+  "Municipality of Skagway",
   "Southeast Fairbanks Census Area",
   "City and Borough of Wrangell",
   "City and Borough of Yakutat",
@@ -77,119 +77,119 @@ v_persistent <- c(
 
 #locales with seasonal high unemployment (from reviewing heatmap)
 v_seasonal <- c(
-  "Kenai Peninsula Borough",
   "Kodiak Island Borough",
   "Chugach Census Area",
-  "Aleutians West Census Area",
   "Southeast Fairbanks Census Area",
   "Denali Borough",
   "Hoonah-Angoon Census Area",
   "Copper River Census Area",
   "Petersburg Borough",
   "Haines Borough",
-  "City and Borough of Wrangell",
+  # "City and Borough of Wrangell",
   "Lake and Peninsula Borough",
   "Bristol Bay Borough",
-  "City and Borough of Yakutat"
+  "City and Borough of Yakutat",
+  "Municipality of Skagway",
+  # "Aleutians West Census Area",
+  "Aleutians East Borough"
 )
 
 # IMPORT ------------------------------------------------------------------
 
+#source: https://live.laborstats.alaska.gov/data-pages/labor-force-area-data?a=0&s=1
 #AK seasonally unadjusted unemployment
-#source: https://akgeoportal.alaska.gov/datasets/DCCED::alaska-unemployment-rates-by-borough-and-census-area/about
 df_ak <- read_csv(
   path_ak,
+  skip = 1,
   name_repair = make_clean_names
 )
 
 #National unemployment
-#source: https://fred.stlouisfed.org/series/UNRATENSA/
 df_us <- read_csv(
   path_us,
+  skip = 1,
   name_repair = make_clean_names
 )
 
 # REVIEW DATA ------------------------------------------------------------
 
 #are there missing locale?
-# setdiff(unique(df_ak$community_name), v_provided)
-# setdiff(v_provided, unique(df_ak$community_name))
+# setdiff(unique(df_ak$area_name), v_provided)
+# setdiff(v_provided, unique(df_ak$area_name))
 
-# unique(df_ak$community_name) |> sort()
+# unique(df_ak$area_name) |> sort()
 
-# str_subset(unique(df_ak$community_name), "Anchorage")
+# str_subset(unique(df_ak$area_name), "Anchorage")
 
 # df_ak |>
-#   filter(data_year >= 2024, str_detect(community_name, "Anchorage")) |>
-#   count(community_name)
+#   filter(year >= 2024, str_detect(area_name, "Anc")) |>
+#   count(area_name)
 
 # MUNGE -------------------------------------------------------------------
 
-#subset to recent data and a local in the file AK sent over
+#subset to recent data & clean up date for plotting and convert rate to a rate
 df_ak <- df_ak |>
   filter(
-    data_year >= 2024,
-    community_name %in% v_provided
-  )
-
-#clean up date for plotting and convert rate to a rate
-df_ak <- df_ak |>
+    year >= 2024,
+    area_name %in% v_provided,
+    month != "Annual"
+  ) |>
   mutate(
-    date = make_date(data_year, period),
+    date = make_date(year, period),
     unemployment_rate = unemployment_rate / 100
   )
 
 
 #clean up US unemployment rate, limiting to AK date range
 df_us <- df_us |>
-  mutate(unratensa = unratensa / 100) |>
-  rename(
-    unemployment_rate_us = unratensa,
-    date = observation_date
-  ) |>
   filter(
-    date >= min(df_ak$date),
-    date <= max(df_ak$date),
+    year >= min(df_ak$year),
+    month != "Annual"
+  ) |>
+  mutate(
+    date = make_date(year, period),
+    unemployment_rate = unemployment_rate / 100,
+    area_name = "US"
   )
 
 
 #merge US unemployment (not seasonally adjusted) onto AK locale data
 df_unempl <- df_ak |>
-  bind_rows(
+  filter(date <= max(df_us$date)) |>
+  bind_rows(df_us) |>
+  left_join(
     df_us |>
-      mutate(
-        community_name = "US",
-        data_year = year(date)
-      ) |>
-      rename(unemployment_rate = unemployment_rate_us)
-  ) |>
-  left_join(df_us, by = join_by(date))
+      select(date, unemployment_rate_us = unemployment_rate),
+    by = join_by(date)
+  )
 
 
 # capture latest rate for ordering + labeling in plots
 df_unempl <- df_unempl |>
+  group_by(area_name) |>
   mutate(
     labor_force_latest = case_when(
-      community_name == "US" ~ 0,
-      date == max(date) ~ labor_force
+      area_name == "US" ~ 0,
+      date == max(date, na.rm = TRUE) ~ labor_force
     ),
   ) |>
-  fill(labor_force_latest, .by = community_name, .direction = "updown")
+  fill(labor_force_latest, .direction = "updown") |>
+  ungroup()
 
 
 #capture mean unemployment rate for ordering in plots
 df_unempl <- df_unempl |>
-  group_by(community_name) |>
+  group_by(area_name) |>
   mutate(
-    unemployment_rate_mean_2025 = case_when(
-      data_year == 2025 ~ unemployment_rate
+    unemployment_rate_latest_yr = case_when(
+      year == max(year) ~ unemployment_rate
     ),
-    unemployment_rate_mean_2025 = mean(
-      unemployment_rate_mean_2025,
+    unemployment_rate_latest_yr = mean(
+      unemployment_rate_latest_yr,
       na.rm = TRUE
     )
   ) |>
-  fill(unemployment_rate_mean_2025, .direction = "updown") |>
+  fill(unemployment_rate_latest_yr, .direction = "updown") |>
   ungroup()
 
 #identify high unemployment locales
@@ -202,7 +202,7 @@ df_unempl <- df_unempl |>
     fill_color = case_when(
       flag == "v high" ~ "#dd1c77",
       flag == "high" ~ "#c994c7",
-      community_name == "US" ~ "#f7f4f9",
+      area_name == "US" ~ "#f7f4f9",
       TRUE ~ "#e7e1ef"
     )
   )
@@ -211,32 +211,31 @@ df_unempl <- df_unempl |>
 df_unempl <- df_unempl |>
   mutate(
     locale_group = case_when(
-      community_name %in% v_persistent ~ "persistent",
-      community_name %in% v_seasonal ~ "seasonal",
-      community_name == "US" ~ " ",
+      area_name %in% v_persistent ~ "persistent",
+      area_name %in% v_seasonal ~ "seasonal",
+      area_name == "US" ~ " ",
       TRUE ~ ""
     ),
     locale_group = factor(locale_group, c("persistent", "seasonal", "", " ")),
     comm_lab = case_when(
-      community_name == "US" ~ community_name,
-      community_name == "Bethel Census Area" ~ glue(
-        "{community_name} ({format(max(df_ak$date), '%b %Y')} Labor Force = {label_comma()(labor_force_latest)})"
+      area_name == "US" ~ area_name,
+      area_name == "Bethel Census Area" ~ glue(
+        "{area_name} ({format(max(df_ak$date), '%b %Y')} Labor Force = {label_comma()(labor_force_latest)})"
       ),
-      TRUE ~ glue("{community_name} ({label_comma()(labor_force_latest)})")
+      TRUE ~ glue("{area_name} ({label_comma()(labor_force_latest)})")
     )
   )
 
 #remove 1 case of duplicate
-df_unempl <- df_unempl |>
-  group_by(community_name, date) |>
-  slice_head(n = 1) |>
-  ungroup()
-
+# df_unempl <- df_unempl |>
+#   group_by(area_name, date) |>
+#   slice_head(n = 1) |>
+#   ungroup()
 
 #look at how many locales are in each group
 df_unempl |>
   filter(
-    community_name != "US",
+    area_name != "US",
     date == max(date)
   ) |>
   count(locale_group) |>
@@ -251,15 +250,16 @@ df_unempl |>
   geom_ribbon(
     aes(ymin = unemployment_rate_us * 1.5, ymax = unemployment_rate),
     fill = "#dd1c77",
-    alpha = .1
+    alpha = .1,
+    na.rm = TRUE
   ) +
   geom_line(
     aes(date, unemployment_rate_us * 1.5),
     color = "#909090",
     alpha = .6,
-    data = df_us |> filter(between(date, min(df_ak$date), max(df_ak$date)))
+    na.rm = TRUE
   ) +
-  geom_line(aes(group = comm_lab), color = "#dd1c77") +
+  geom_line(aes(group = comm_lab), color = "#dd1c77", na.rm = TRUE) +
   facet_wrap(
     ~ fct_reorder(comm_lab, labor_force_latest, .desc = TRUE, .na_rm = TRUE)
   ) +
@@ -271,7 +271,7 @@ df_unempl |>
     title = "Seven locales see persisently high unemeployment" |> toupper(),
     subtitle = "High unemployment is 1.5x or more above the US monthly rate (gray line)",
     caption = "Note: Unemployment rate not seasonally adjusted
-    Source: Alaska Department of Labor + FRED"
+    Source: Alaska Department of Labor and Workforce Development"
   ) +
   si_style() +
   theme(panel.spacing = unit(1, "lines"))
@@ -286,16 +286,17 @@ df_unempl |>
   geom_ribbon(
     aes(ymin = unemployment_rate_us * 1.5, ymax = unemployment_rate),
     fill = "#c994c7",
-    alpha = .1
+    alpha = .1,
+    na.rm = TRUE
   ) +
   geom_line(
     aes(date, unemployment_rate_us * 1.5),
     color = "#909090",
     alpha = .6,
     # linewidth = 1.5,
-    data = df_us |> filter(between(date, min(df_ak$date), max(df_ak$date)))
+    na.rm = TRUE
   ) +
-  geom_line(aes(group = comm_lab), color = "#c994c7") +
+  geom_line(aes(group = comm_lab), color = "#c994c7", na.rm = TRUE) +
   facet_wrap(
     ~ fct_reorder(comm_lab, labor_force_latest, .desc = TRUE, .na_rm = TRUE)
   ) +
@@ -304,11 +305,11 @@ df_unempl |>
   labs(
     x = NULL,
     y = NULL,
-    title = "Fourteen locales experience high unemployment seasonally" |>
+    title = "Thirteen locales experience high unemployment seasonally" |>
       toupper(),
     subtitle = "High unemployment is 1.5x or more above the US monthly rate (gray line)",
     caption = "Note: Unemployment rate is not seasonally adjusted
-    Source: Alaska Department of Labor + FRED"
+    Source: Alaska Department of Labor and Workforce Development"
   ) +
   si_style() +
   theme(panel.spacing = unit(1, "lines"))
@@ -319,15 +320,16 @@ si_save("Images/ak_unempl_locale_trends_seasonal.png")
 
 #heat map of unemployment rates
 df_unempl |>
-  ggplot(aes(date, fct_reorder(comm_lab, labor_force_latest))) +
-  geom_tile(aes(fill = fill_color, color = 'white')) +
+  ggplot(aes(date, fct_reorder(comm_lab, labor_force_latest, .na_rm = TRUE))) +
+  geom_tile(aes(fill = fill_color, color = 'white'), na.rm = TRUE) +
   geom_text(
     aes(label = label_percent(.1)(unemployment_rate)),
-    size = 6 / .pt,
-    family = "Source Sans"
+    size = 5 / .pt,
+    family = "Source Sans",
+    na.rm = TRUE
   ) +
   facet_grid(
-    locale_group ~ data_year,
+    locale_group ~ year,
     scales = "free",
     space = "free",
     switch = "y"
@@ -350,9 +352,9 @@ df_unempl |>
     fill = NULL,
     title = "Nearly 75% of Alaska Locales experience persistent or seasonal unemployment" |>
       toupper(),
-    subtitle = "7 locales have have persisent high unemployment with another 14 experiencing it seasonally",
+    subtitle = "7 locales have have persisent high unemployment with another 13 experiencing it seasonally",
     caption = "Note: High unemployment is 1.5x or more above the US monthly rate | Unemployment rate is not seasonally adjusted
-    Source: Alaska Department of Labor + FRED"
+    Source: Alaska Department of Labor and Workforce Development"
   ) +
   si_style_nolines() +
   theme(
@@ -371,10 +373,10 @@ si_save("Images/ak_unempl_locale_heatmap.png")
 #setup data for scatter
 df_unempl_scatter <- df_unempl |>
   filter(
-    data_year == max(data_year),
-    community_name != "US"
+    year == max(year),
+    area_name != "US"
   ) |>
-  group_by(community_name, locale_group) |>
+  group_by(area_name, locale_group) |>
   summarise(
     unemployment_rate = mean(unemployment_rate),
     labor_force = mean(labor_force),
@@ -405,13 +407,13 @@ df_unempl_scatter |>
   scale_x_log10(label = label_number(scale_cut = cut_short_scale())) +
   scale_y_continuous(label = label_percent()) +
   labs(
-    x = "Labor Force (2025 Avg, Log Scale)",
-    y = "Unemployment Rate (2025 Avg)",
+    x = "Labor Force (2026 Avg, Log Scale)",
+    y = "Unemployment Rate (2026 Avg)",
     title = "Seaonal unemployment more typically seen in smaller locales" |>
       toupper(),
     subtitle = "All locales are depicted in gray for context",
     caption = "Note: High unemployment is 1.5x or more above the US monthly rate | Unemployment rate is not seasonally adjusted
-    Source: Alaska Department of Labor + FRED"
+    Source: Alaska Department of Labor and Workforce Development"
   ) +
   si_style() +
   theme(legend.position = "none")
